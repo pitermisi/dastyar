@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Instagram, AlertCircle, Sparkles, Database, CheckCircle, ExternalLink } from 'lucide-react';
+import { Instagram, AlertCircle, Sparkles, Database, CheckCircle, ExternalLink, HelpCircle, Copy, Check, ChevronDown, ChevronUp } from 'lucide-react';
 import { LoginButton } from './components/LoginButton.js';
 import { InstagramProfile } from './components/InstagramProfile.js';
 import type { InstagramProfileData, AuthState } from './types/instagram.js';
@@ -9,10 +9,26 @@ export default function App() {
   const [isCheckingAuth, setIsCheckingAuth] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [currentPath, setCurrentPath] = useState<string>(window.location.pathname);
+  const [showTroubleshooting, setShowTroubleshooting] = useState(false);
+  const [copiedUri, setCopiedUri] = useState(false);
   const [configInfo, setConfigInfo] = useState<{
     databaseConfigured: boolean;
     metaConfigured: boolean;
   } | null>(null);
+
+  // Derive exact callback URI for current origin
+  const currentOrigin = typeof window !== 'undefined' ? window.location.origin : '';
+  const callbackUri = `${currentOrigin}/api/auth/instagram/callback`;
+
+  const copyRedirectUri = async () => {
+    try {
+      await navigator.clipboard.writeText(callbackUri);
+      setCopiedUri(true);
+      setTimeout(() => setCopiedUri(false), 2500);
+    } catch {
+      // Fallback
+    }
+  };
 
   // Fetch authentication status from backend
   const checkAuth = async () => {
@@ -219,7 +235,10 @@ export default function App() {
               <div className="pt-2 flex flex-col items-center">
                 <LoginButton
                   onSuccess={handleLoginSuccess}
-                  onError={(msg) => setErrorMessage(msg)}
+                  onError={(msg) => {
+                    setErrorMessage(msg);
+                    setShowTroubleshooting(true);
+                  }}
                   className="w-full sm:w-auto"
                 />
               </div>
@@ -231,6 +250,95 @@ export default function App() {
                 </span>
                 <span>Minimum Scope: Basic Profile</span>
               </div>
+            </div>
+
+            {/* Troubleshooting Guide for Instagram Connection Error */}
+            <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs overflow-hidden text-left transition-all">
+              <button
+                type="button"
+                onClick={() => setShowTroubleshooting(!showTroubleshooting)}
+                className="w-full p-5 flex items-center justify-between gap-4 text-left hover:bg-slate-50/80 transition cursor-pointer"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-lg bg-amber-50 text-amber-600 flex items-center justify-center shrink-0 border border-amber-200/60">
+                    <HelpCircle className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-semibold text-slate-800">
+                      Getting &ldquo;We couldn&apos;t connect to Instagram&rdquo;?
+                    </h4>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      Check 4 common reasons why Meta blocks authorization
+                    </p>
+                  </div>
+                </div>
+                <div className="text-slate-400">
+                  {showTroubleshooting ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+                </div>
+              </button>
+
+              {showTroubleshooting && (
+                <div className="px-5 pb-6 pt-2 border-t border-slate-100 space-y-4 text-xs text-slate-600 bg-slate-50/50">
+                  <div className="space-y-1.5 bg-white p-3.5 rounded-xl border border-slate-200/70">
+                    <p className="font-semibold text-slate-900 flex items-center gap-2">
+                      <span className="w-5 h-5 rounded-full bg-pink-100 text-pink-700 flex items-center justify-center text-xs font-bold">1</span>
+                      Instagram Professional Account Required (Creator or Business)
+                    </p>
+                    <p className="text-slate-500 pl-7 leading-relaxed">
+                      Meta completely deprecated personal account API access on <strong>December 4, 2024</strong>. Personal Instagram accounts will display this exact &ldquo;couldn&apos;t connect&rdquo; error.
+                    </p>
+                    <p className="text-slate-600 pl-7 font-medium">
+                      👉 In Instagram App: Go to <strong>Settings & Privacy &rarr; Account type and tools &rarr; Switch to professional account</strong> (free, takes 10 seconds).
+                    </p>
+                  </div>
+
+                  <div className="space-y-1.5 bg-white p-3.5 rounded-xl border border-slate-200/70">
+                    <p className="font-semibold text-slate-900 flex items-center gap-2">
+                      <span className="w-5 h-5 rounded-full bg-pink-100 text-pink-700 flex items-center justify-center text-xs font-bold">2</span>
+                      Meta Developer App in &ldquo;Development Mode&rdquo;
+                    </p>
+                    <p className="text-slate-500 pl-7 leading-relaxed">
+                      If your app at <a href="https://developers.facebook.com" target="_blank" rel="noopener noreferrer" className="text-pink-600 underline font-medium">developers.facebook.com</a> is in Development mode, only authorized testers can log in.
+                    </p>
+                    <p className="text-slate-600 pl-7">
+                      👉 Go to your Meta App Dashboard &rarr; <strong>App Roles &rarr; Roles &rarr; Add Testers</strong> (or <strong>Instagram Testers</strong>), enter your username, and then accept the invite in Instagram (<strong>Settings &rarr; Apps and Websites &rarr; Tester Invitations</strong>).
+                    </p>
+                  </div>
+
+                  <div className="space-y-1.5 bg-white p-3.5 rounded-xl border border-slate-200/70">
+                    <p className="font-semibold text-slate-900 flex items-center gap-2">
+                      <span className="w-5 h-5 rounded-full bg-pink-100 text-pink-700 flex items-center justify-center text-xs font-bold">3</span>
+                      Valid OAuth Redirect URI Must Match
+                    </p>
+                    <p className="text-slate-500 pl-7 leading-relaxed">
+                      In Meta Developer Dashboard under <strong>Instagram &rarr; API setup with Instagram Login</strong>, make sure this exact HTTPS callback URL is listed under <strong>Valid OAuth Redirect URIs</strong>:
+                    </p>
+                    <div className="pl-7 pt-1 flex items-center gap-2">
+                      <code className="px-2.5 py-1.5 bg-slate-100 rounded-lg text-slate-800 font-mono text-[11px] truncate flex-1 select-all border border-slate-200">
+                        {callbackUri}
+                      </code>
+                      <button
+                        type="button"
+                        onClick={copyRedirectUri}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 text-white rounded-lg text-xs font-medium hover:bg-slate-800 transition cursor-pointer shrink-0"
+                      >
+                        {copiedUri ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                        {copiedUri ? 'Copied!' : 'Copy URI'}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="space-y-1.5 bg-white p-3.5 rounded-xl border border-slate-200/70">
+                    <p className="font-semibold text-slate-900 flex items-center gap-2">
+                      <span className="w-5 h-5 rounded-full bg-pink-100 text-pink-700 flex items-center justify-center text-xs font-bold">4</span>
+                      Try an Incognito / Private Window
+                    </p>
+                    <p className="text-slate-500 pl-7 leading-relaxed">
+                      Stale Instagram browser cookies or multi-account login sessions on <code>instagram.com</code> frequently cause authentication handshake failures. Opening this dashboard in an Incognito window creates a fresh connection.
+                    </p>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* If user is already authenticated but on home page */}

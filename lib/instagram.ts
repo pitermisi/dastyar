@@ -4,7 +4,7 @@ import type {
   InstagramLongLivedTokenResponse,
 } from '../types/instagram.js';
 
-const INSTAGRAM_AUTH_URL = 'https://api.instagram.com/oauth/authorize';
+const DEFAULT_INSTAGRAM_AUTH_URL = 'https://www.instagram.com/oauth/authorize';
 const INSTAGRAM_TOKEN_URL = 'https://api.instagram.com/oauth/access_token';
 const INSTAGRAM_GRAPH_URL = 'https://graph.instagram.com';
 
@@ -29,10 +29,21 @@ export function getMetaAppSecret(): string {
  */
 export function getInstagramRedirectUri(requestOrigin?: string): string {
   if (process.env.INSTAGRAM_REDIRECT_URI) {
-    return process.env.INSTAGRAM_REDIRECT_URI.trim();
+    let configuredUri = process.env.INSTAGRAM_REDIRECT_URI.trim();
+    if (!configuredUri.includes('localhost') && !configuredUri.includes('127.0.0.1')) {
+      configuredUri = configuredUri.replace(/^http:\/\//i, 'https://');
+    }
+    return configuredUri;
   }
-  const baseUrl = process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL || requestOrigin || 'http://localhost:3000';
-  const cleanBase = baseUrl.replace(/\/$/, '');
+
+  let baseUrl = process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL || requestOrigin || 'http://localhost:3000';
+  let cleanBase = baseUrl.replace(/\/$/, '');
+
+  // For public production deployments (e.g., Railway, Cloud Run), force HTTPS scheme
+  if (!cleanBase.includes('localhost') && !cleanBase.includes('127.0.0.1')) {
+    cleanBase = cleanBase.replace(/^http:\/\//i, 'https://');
+  }
+
   return `${cleanBase}/api/auth/instagram/callback`;
 }
 
@@ -49,9 +60,10 @@ export function buildInstagramAuthUrl(options: {
     throw new Error('META_APP_ID is not configured in environment variables.');
   }
 
-  // Minimum required permissions for Instagram Login
+  // Minimum required permissions for Instagram Login for Business
   const defaultScope = 'instagram_business_basic';
   const scope = options.scope || process.env.INSTAGRAM_SCOPES || defaultScope;
+  const authEndpoint = process.env.INSTAGRAM_AUTH_URL || DEFAULT_INSTAGRAM_AUTH_URL;
 
   const params = new URLSearchParams({
     client_id: clientId,
@@ -61,7 +73,12 @@ export function buildInstagramAuthUrl(options: {
     state: options.state,
   });
 
-  return `${INSTAGRAM_AUTH_URL}?${params.toString()}`;
+  // If specified in environment, configure whether Facebook login is presented
+  if (process.env.INSTAGRAM_ENABLE_FB_LOGIN !== undefined) {
+    params.set('enable_fb_login', process.env.INSTAGRAM_ENABLE_FB_LOGIN);
+  }
+
+  return `${authEndpoint}?${params.toString()}`;
 }
 
 /**
