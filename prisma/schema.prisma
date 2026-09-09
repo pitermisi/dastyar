@@ -1,0 +1,50 @@
+// Prisma Schema for Instagram AI Dashboard MVP
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id               String            @id @default(cuid())
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  instagramAccount InstagramAccount?
+  sessions         Session[]
+
+  @@map("users")
+}
+
+model InstagramAccount {
+  id                                  String    @id @default(cuid())
+  userId                              String    @unique
+  user                                User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  instagramUserId                     String    @unique
+  username                            String
+  name                                String?
+  accountType                         String?   // e.g. BUSINESS, MEDIA_CREATOR, PERSONAL
+  profilePictureUrl                   String?   @db.Text
+  accessTokenEncryptedOrSecurelyStored String    @db.Text
+  tokenExpiresAt                      DateTime?
+  createdAt                           DateTime  @default(now())
+  updatedAt                           DateTime  @updatedAt
+
+  @@index([instagramUserId])
+  @@map("instagram_accounts")
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("sessions")
+}

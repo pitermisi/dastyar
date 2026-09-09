@@ -1,0 +1,6 @@
+{
+  "name": "Instagram AI Dashboard",
+  "description": "Connect your Instagram account to get started with profile insights and OAuth integration.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
