@@ -16,6 +16,7 @@ model User {
   updatedAt        DateTime          @updatedAt
   instagramAccount InstagramAccount?
   sessions         Session[]
+  automationRules  AutomationRule[]
 
   @@map("users")
 }
@@ -27,7 +28,7 @@ model InstagramAccount {
   instagramUserId                     String    @unique
   username                            String
   name                                String?
-  accountType                         String?   // e.g. BUSINESS, MEDIA_CREATOR, PERSONAL
+  accountType                         String?
   profilePictureUrl                   String?   @db.Text
   accessTokenEncryptedOrSecurelyStored String    @db.Text
   tokenExpiresAt                      DateTime?
@@ -48,4 +49,58 @@ model Session {
   @@index([userId])
   @@index([expiresAt])
   @@map("sessions")
+}
+
+model AutomationRule {
+  id          String               @id @default(cuid())
+  userId      String
+  user        User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name        String
+  isActive    Boolean              @default(true)
+  createdAt   DateTime             @default(now())
+  updatedAt   DateTime             @updatedAt
+  conditions  AutomationCondition[]
+  actions     AutomationAction[]
+
+  @@index([userId])
+  @@map("automation_rules")
+}
+
+model AutomationCondition {
+  id              String          @id @default(cuid())
+  ruleId          String
+  rule            AutomationRule  @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+  type            String          // "trigger", "audience", "keyword"
+  operator        String?         // "contains_any", "contains_all", "exact_match"
+  value           String          @db.Text // JSON-encoded value
+  createdAt       DateTime        @default(now())
+
+  @@index([ruleId])
+  @@map("automation_conditions")
+}
+
+model AutomationAction {
+  id              String          @id @default(cuid())
+  ruleId          String
+  rule            AutomationRule  @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+  type            String          // "send_message", "reply"
+  sortOrder       Int             @default(0)
+  createdAt       DateTime        @default(now())
+  messageBlocks   MessageBlock[]
+
+  @@index([ruleId])
+  @@map("automation_actions")
+}
+
+model MessageBlock {
+  id          String           @id @default(cuid())
+  actionId    String
+  action      AutomationAction @relation(fields: [actionId], references: [id], onDelete: Cascade)
+  type        String           // "text", "image", "video", "audio", "button"
+  sortOrder   Int              @default(0)
+  content     String           @db.Text // JSON-encoded content
+  createdAt   DateTime         @default(now())
+
+  @@index([actionId])
+  @@map("message_blocks")
 }

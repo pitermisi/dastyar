@@ -12,6 +12,9 @@ import {
   getMetaAppId,
   getMetaAppSecret,
 } from './lib/instagram.js';
+import { getProfileFromDb } from './lib/instagram/profile.js';
+import { getAnalyticsSummary, getTopContent, getGrowthData } from './lib/instagram/insights.js';
+import { decryptToken } from './lib/crypto.js';
 import {
   generateOAuthState,
   getSessionCookieOptions,
@@ -22,7 +25,7 @@ import {
   SESSION_COOKIE_NAME,
   OAUTH_STATE_COOKIE_NAME,
 } from './lib/auth.js';
-import { isDatabaseConfigured } from './lib/prisma.js';
+import { isDatabaseConfigured, getPrisma } from './lib/prisma.js';
 
 const app = express();
 const isAiStudio = Boolean(process.env.APPLET_ID || process.env.APPLET_DIR);
@@ -357,6 +360,312 @@ app.get(['/api/webhooks/instagram', '/api/webhooks/instagram/'], (req: Request, 
 
 app.post(['/api/webhooks/instagram', '/api/webhooks/instagram/'], (req: Request, res: Response) => {
   res.sendStatus(200);
+});
+
+/* ==========================================================================
+   Auth middleware helper
+   ========================================================================== */
+
+async function requireAuth(req: Request): Promise<{ userId: string } | null> {
+  const sessionId = req.cookies[SESSION_COOKIE_NAME];
+  if (!sessionId) return null;
+  const sessionData = await getSessionUser(sessionId);
+  if (!sessionData) return null;
+  return { userId: sessionData.user.id };
+}
+
+/* ==========================================================================
+   Instagram Data API Endpoints
+   ========================================================================== */
+
+app.get('/api/instagram/profile', async (req: Request, res: Response) => {
+  const auth = await requireAuth(req);
+  if (!auth) return res.status(401).json({ error: 'Unauthorized' });
+
+  try {
+    const profile = await getProfileFromDb(auth.userId);
+    if (!profile) return res.status(404).json({ error: 'Profile not found' });
+    return res.json({ profile });
+  } catch (error) {
+    console.error('Error fetching Instagram profile');
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.get('/api/instagram/analytics', async (req: Request, res: Response) => {
+  const auth = await requireAuth(req);
+  if (!auth) return res.status(401).json({ error: 'Unauthorized' });
+
+  try {
+    if (!isDatabaseConfigured()) {
+      return res.json({ summary: { available: false, message: 'پایگاه داده پیکربندی نشده است.' } });
+    }
+    const prisma = getPrisma();
+    const account = await prisma.instagramAccount.findUnique({ where: { userId: auth.userId } });
+    if (!account) return res.json({ summary: { available: false, message: 'حساب اینستاگرام متصل نیست.' } });
+
+    const accessToken = decryptToken(account.accessTokenEncryptedOrSecurelyStored);
+    const summary = await getAnalyticsSummary(accessToken, account.instagramUserId);
+    return res.json({ summary });
+  } catch (error) {
+    console.error('Error fetching analytics');
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.get('/api/instagram/top-content', async (req: Request, res: Response) => {
+  const auth = await requireAuth(req);
+  if (!auth) return res.status(401).json({ error: 'Unauthorized' });
+
+  try {
+    if (!isDatabaseConfigured()) {
+      return res.json({ topContent: { byViews: [], byLikes: [], byComments: [], available: false, message: 'پایگاه داده پیکربندی نشده است.' } });
+    }
+    const prisma = getPrisma();
+    const account = await prisma.instagramAccount.findUnique({ where: { userId: auth.userId } });
+    if (!account) return res.json({ topContent: { byViews: [], byLikes: [], byComments: [], available: false, message: 'حساب اینستاگرام متصل نیست.' } });
+
+    const accessToken = decryptToken(account.accessTokenEncryptedOrSecurelyStored);
+    const topContent = await getTopContent(accessToken);
+    return res.json({ topContent });
+  } catch (error) {
+    console.error('Error fetching top content');
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.get('/api/instagram/growth', async (req: Request, res: Response) => {
+  const auth = await requireAuth(req);
+  if (!auth) return res.status(401).json({ error: 'Unauthorized' });
+
+  try {
+    const growth = await getGrowthData('');
+    return res.json({ growth });
+  } catch (error) {
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+/* ==========================================================================
+   Automation API Endpoints
+   ========================================================================== */
+
+app.get('/api/automation', async (req: Request, res: Response) => {
+  const auth = await requireAuth(req);
+  if (!auth) return res.status(401).json({ error: 'Unauthorized' });
+
+  try {
+    if (!isDatabaseConfigured()) {
+      return res.json({ rules: [] });
+    }
+    const prisma = getPrisma();
+    const rules = await prisma.automationRule.findMany({
+      where: { userId: auth.userId },
+      include: {
+        conditions: true,
+        actions: {
+          include: { messageBlocks: { orderBy: { sortOrder: 'asc' } } },
+          orderBy: { sortOrder: 'asc' },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    const serialized = rules.map((r) => ({
+      id: r.id,
+      name: r.name,
+      isActive: r.isActive,
+      createdAt: r.createdAt.toISOString(),
+      updatedAt: r.updatedAt.toISOString(),
+      conditions: r.conditions.map((c) => ({
+        type: c.type,
+        operator: c.operator,
+        value: JSON.parse(c.value),
+      })),
+      actions: r.actions.map((a) => ({
+        type: a.type,
+        messageBlocks: a.messageBlocks.map((b) => ({
+          type: b.type,
+          content: JSON.parse(b.content),
+        })),
+      })),
+    }));
+
+    return res.json({ rules: serialized });
+  } catch (error) {
+    console.error('Error fetching automation rules');
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/api/automation', async (req: Request, res: Response) => {
+  const auth = await requireAuth(req);
+  if (!auth) return res.status(401).json({ error: 'Unauthorized' });
+
+  try {
+    if (!isDatabaseConfigured()) {
+      return res.status(503).json({ error: 'Database not configured' });
+    }
+    const prisma = getPrisma();
+    const { name, conditions, actions } = req.body;
+
+    if (!name || !conditions || !actions) {
+      return res.status(400).json({ error: 'Name, conditions, and actions are required' });
+    }
+
+    const rule = await prisma.automationRule.create({
+      data: {
+        userId: auth.userId,
+        name,
+        conditions: {
+          create: conditions.map((c: any) => ({
+            type: c.type,
+            operator: c.operator || null,
+            value: JSON.stringify(c.value),
+          })),
+        },
+        actions: {
+          create: actions.map((a: any, idx: number) => ({
+            type: a.type,
+            sortOrder: idx,
+            messageBlocks: {
+              create: (a.messageBlocks || []).map((b: any, bIdx: number) => ({
+                type: b.type,
+                sortOrder: bIdx,
+                content: JSON.stringify(b.content),
+              })),
+            },
+          })),
+        },
+      },
+      include: {
+        conditions: true,
+        actions: { include: { messageBlocks: true } },
+      },
+    });
+
+    return res.status(201).json({
+      rule: {
+        id: rule.id,
+        name: rule.name,
+        isActive: rule.isActive,
+        createdAt: rule.createdAt.toISOString(),
+        updatedAt: rule.updatedAt.toISOString(),
+        conditions: rule.conditions.map((c) => ({ type: c.type, operator: c.operator, value: JSON.parse(c.value) })),
+        actions: rule.actions.map((a) => ({
+          type: a.type,
+          messageBlocks: a.messageBlocks.map((b) => ({ type: b.type, content: JSON.parse(b.content) })),
+        })),
+      },
+    });
+  } catch (error) {
+    console.error('Error creating automation rule');
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.put('/api/automation/:id', async (req: Request, res: Response) => {
+  const auth = await requireAuth(req);
+  if (!auth) return res.status(401).json({ error: 'Unauthorized' });
+
+  try {
+    if (!isDatabaseConfigured()) {
+      return res.status(503).json({ error: 'Database not configured' });
+    }
+    const prisma = getPrisma();
+    const { id } = req.params;
+    const { name, isActive, conditions, actions } = req.body;
+
+    // Verify ownership
+    const existing = await prisma.automationRule.findFirst({ where: { id, userId: auth.userId } });
+    if (!existing) return res.status(404).json({ error: 'Rule not found' });
+
+    // Update basic fields
+    const updateData: any = {};
+    if (name !== undefined) updateData.name = name;
+    if (isActive !== undefined) updateData.isActive = isActive;
+
+    // If conditions/actions provided, replace them
+    if (conditions || actions) {
+      // Delete existing conditions and actions (cascade will handle message blocks)
+      await prisma.automationCondition.deleteMany({ where: { ruleId: id } });
+      await prisma.automationAction.deleteMany({ where: { ruleId: id } });
+
+      if (conditions) {
+        updateData.conditions = {
+          create: conditions.map((c: any) => ({
+            type: c.type,
+            operator: c.operator || null,
+            value: JSON.stringify(c.value),
+          })),
+        };
+      }
+      if (actions) {
+        updateData.actions = {
+          create: actions.map((a: any, idx: number) => ({
+            type: a.type,
+            sortOrder: idx,
+            messageBlocks: {
+              create: (a.messageBlocks || []).map((b: any, bIdx: number) => ({
+                type: b.type,
+                sortOrder: bIdx,
+                content: JSON.stringify(b.content),
+              })),
+            },
+          })),
+        };
+      }
+    }
+
+    const rule = await prisma.automationRule.update({
+      where: { id },
+      data: updateData,
+      include: {
+        conditions: true,
+        actions: { include: { messageBlocks: { orderBy: { sortOrder: 'asc' } } } },
+      },
+    });
+
+    return res.json({
+      rule: {
+        id: rule.id,
+        name: rule.name,
+        isActive: rule.isActive,
+        createdAt: rule.createdAt.toISOString(),
+        updatedAt: rule.updatedAt.toISOString(),
+        conditions: rule.conditions.map((c) => ({ type: c.type, operator: c.operator, value: JSON.parse(c.value) })),
+        actions: rule.actions.map((a) => ({
+          type: a.type,
+          messageBlocks: a.messageBlocks.map((b) => ({ type: b.type, content: JSON.parse(b.content) })),
+        })),
+      },
+    });
+  } catch (error) {
+    console.error('Error updating automation rule');
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.delete('/api/automation/:id', async (req: Request, res: Response) => {
+  const auth = await requireAuth(req);
+  if (!auth) return res.status(401).json({ error: 'Unauthorized' });
+
+  try {
+    if (!isDatabaseConfigured()) {
+      return res.status(503).json({ error: 'Database not configured' });
+    }
+    const prisma = getPrisma();
+    const { id } = req.params;
+
+    const existing = await prisma.automationRule.findFirst({ where: { id, userId: auth.userId } });
+    if (!existing) return res.status(404).json({ error: 'Rule not found' });
+
+    await prisma.automationRule.delete({ where: { id } });
+    return res.json({ success: true });
+  } catch (error) {
+    console.error('Error deleting automation rule');
+    return res.status(500).json({ error: 'Internal server error' });
+  }
 });
 
 /* ==========================================================================
