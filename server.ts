@@ -1,5 +1,6 @@
 import express, { Request, Response } from 'express';
 import path from 'path';
+import fs from 'fs';
 import cookieParser from 'cookie-parser';
 import { createServer as createViteServer } from 'vite';
 import {
@@ -26,7 +27,8 @@ import { isDatabaseConfigured } from './lib/prisma.js';
 const app = express();
 const isAiStudio = Boolean(process.env.APPLET_ID || process.env.APPLET_DIR);
 const PORT = isAiStudio ? 3000 : (process.env.PORT ? parseInt(process.env.PORT, 10) : 3000);
-const isProduction = process.env.NODE_ENV === 'production';
+const distIndexExists = fs.existsSync(path.join(process.cwd(), 'dist', 'index.html'));
+const isProduction = process.env.NODE_ENV === 'production' || (distIndexExists && process.env.NODE_ENV !== 'development');
 
 // Essential middlewares
 app.use(express.json());
@@ -258,7 +260,10 @@ app.post(['/api/auth/logout', '/api/auth/logout/'], async (req: Request, res: Re
 async function startServer() {
   if (!isProduction) {
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: true,
+        allowedHosts: true as const,
+      },
       appType: 'spa',
     });
     app.use(vite.middlewares);
