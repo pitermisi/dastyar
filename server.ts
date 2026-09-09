@@ -24,7 +24,8 @@ import {
 import { isDatabaseConfigured } from './lib/prisma.js';
 
 const app = express();
-const PORT = 3000;
+const isAiStudio = Boolean(process.env.APPLET_ID || process.env.APPLET_DIR);
+const PORT = isAiStudio ? 3000 : (process.env.PORT ? parseInt(process.env.PORT, 10) : 3000);
 const isProduction = process.env.NODE_ENV === 'production';
 
 // Essential middlewares
